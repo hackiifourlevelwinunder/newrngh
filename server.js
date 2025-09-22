@@ -1,8 +1,9 @@
+// server.js
 const express = require("express");
+const path = require("path");
 const http = require("http");
 const WebSocket = require("ws");
 const crypto = require("crypto");
-const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
@@ -10,63 +11,78 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, "public")));
 
+let currentResult = null;
+let previewResult = null;
+let roundStart = Date.now();
+const roundDuration = 60000; // 60 seconds
 let history = [];
-let currentRound = null;
-let previewRound = null;
 
-function generateTokens() {
+// ✅ Generate CSPRNG 0-9
+function generateCSPRNG() {
+  const buf = crypto.randomBytes(1);
+  return buf[0] % 10;
+}
+
+// ✅ Generate 25 tokens and make final result
+function generateResult() {
   let tokens = [];
   for (let i = 0; i < 25; i++) {
-    tokens.push(crypto.randomInt(0, 10));
+    tokens.push(generateCSPRNG());
   }
-  return tokens;
+  const sum = tokens.reduce((a, b) => a + b, 0);
+  return { tokens, final: sum % 10 };
 }
 
-function calculateResult(tokens) {
-  let sum = tokens.reduce((a, b) => a + b, 0);
-  return sum % 10; // Final single digit result (0-9)
-}
-
-function startRound() {
+// ✅ Update results every round
+function updateRound() {
   const now = Date.now();
-  const nextMinute = Math.floor(now / 60000) * 60000 + 60000;
+  const elapsed = now - roundStart;
 
-  // Schedule preview at -35s
-  setTimeout(() => {
-    const tokens = generateTokens();
-    const result = calculateResult(tokens);
-    previewRound = { tokens, result, time: new Date() };
-    broadcast({ type: "preview", result, tokens, time: previewRound.time });
-  }, nextMinute - now - 35000);
-
-  // Schedule final at 0s
-  setTimeout(() => {
-    if (previewRound) {
-      currentRound = previewRound;
-      history.unshift(currentRound);
-      if (history.length > 20) history.pop();
-      broadcast({ type: "final", result: currentRound.result, tokens: currentRound.tokens, time: currentRound.time, history });
-      previewRound = null;
+  if (elapsed >= roundDuration) {
+    // Round complete → final result lock karo
+    if (previewResult) {
+      currentResult = previewResult;
+      history.unshift(currentResult);
+      if (history.length > 50) history.pop();
     }
-    startRound();
-  }, nextMinute - now);
+
+    // New preview banado for next round
+    previewResult = generateResult();
+    roundStart = now;
+  }
 }
 
-function broadcast(data) {
+// ✅ WebSocket clients update
+setInterval(() => {
+  updateRound();
+  const remaining = roundDuration - (Date.now() - roundStart);
+
+  let data = {
+    time: new Date().toLocaleTimeString(),
+    countdown: Math.max(0, Math.floor(remaining / 1000)),
+    preview: null,
+    final: null,
+    history: history,
+  };
+
+  // Preview result 35 sec pehle show ho
+  if (remaining <= 25000 && previewResult) {
+    data.preview = previewResult;
+  }
+
+  // Final result show ho jab round complete ho
+  if (remaining === 0 && currentResult) {
+    data.final = currentResult;
+  }
+
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify(data));
     }
   });
-}
-
-wss.on("connection", (ws) => {
-  ws.send(JSON.stringify({ type: "history", history }));
-  if (previewRound) ws.send(JSON.stringify({ type: "preview", result: previewRound.result, tokens: previewRound.tokens, time: previewRound.time }));
-  if (currentRound) ws.send(JSON.stringify({ type: "final", result: currentRound.result, tokens: currentRound.tokens, time: currentRound.time }));
-});
-
-startRound();
+}, 1000);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log("Server running on port " + PORT));
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
