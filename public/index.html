@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CSPRNG RNG Server</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; }
+    #clock { font-size: 24px; margin-bottom: 20px; }
+    #countdown { font-size: 20px; margin-bottom: 20px; }
+    .result-box { margin: 10px auto; padding: 15px; border: 1px solid #ccc; border-radius: 8px; width: 300px; }
+  </style>
+</head>
+<body>
+  <h1>Real-time RNG with CSPRNG</h1>
+  <div id="clock"></div>
+  <div id="countdown"></div>
+  <div class="result-box">
+    <h2>Preview Result</h2>
+    <div id="preview"></div>
+  </div>
+  <div class="result-box">
+    <h2>Final Result</h2>
+    <div id="final"></div>
+  </div>
+  <div class="result-box">
+    <h2>History</h2>
+    <ul id="history"></ul>
+  </div>
+  <script>
+    function updateClock() {
+      const now = new Date();
+      document.getElementById("clock").innerText = now.toLocaleTimeString();
+      const sec = now.getSeconds();
+      const countdown = 60 - sec;
+      document.getElementById("countdown").innerText = "Next round in " + countdown + "s";
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    const ws = new WebSocket(`ws://${location.host}`);
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "preview") {
+        document.getElementById("preview").innerText = "Result (35s before): " + data.result;
+      } else if (data.type === "final") {
+        document.getElementById("final").innerText = "Result: " + data.result;
+        updateHistory(data.history);
+      } else if (data.type === "history") {
+        updateHistory(data.history);
+      }
+    };
+
+    function updateHistory(history) {
+      const list = document.getElementById("history");
+      list.innerHTML = "";
+      history.forEach((h) => {
+        const li = document.createElement("li");
+        li.innerText = h.result + " (" + new Date(h.time).toLocaleTimeString() + ")";
+        list.appendChild(li);
+      });
+    }
+  </script>
+</body>
+</html>
